@@ -1,0 +1,9 @@
+*.vscode
+.catkin_tools/
+*.pyc
+src/bruce_slam/src/bruce_slam/__pycache__/
+src/bruce_slam/utils/__pycache__/
+build/
+devel/
+logs/
+*.bag
