@@ -1,0 +1,34 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [noetic]
+        builder: [catkin_tools, catkin_make_isolated_devel]
+    env:
+      ROS_DISTRO: ${{ matrix.distro }}
+      DOWNSTREAM_WORKSPACE: github:arturmiller/pybind11_examples#master
+      BEFORE_SETUP_DOWNSTREAM_WORKSPACE: ${{ matrix.builder != 'catkin_make_isolated_devel' && 'rm -rf $HOME/target_ws/devel' || '' }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ros-industrial/industrial_ci@master
+
+  prerelease:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [noetic]
+    env:
+      ROS_DISTRO: ${{ matrix.distro }}
+      PRERELEASE: true
+      DOWNSTREAM_WORKSPACE: github:arturmiller/pybind11_examples#master
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ros-industrial/industrial_ci@master
