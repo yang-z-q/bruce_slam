@@ -10,30 +10,30 @@ from . import pcl
 
 class Submap(object):
     def __init__(self):
-        # 索引
+        # index
         self.k = 0
 
         # gtsam.Pose2
         self.pose = None
 
-        # 声纳坐标系中每个像素的 x, y 坐标（float32）
-        # 如果为 None，使用前一个
+        # x, y coordinates for every pixel in sonar frame (float32)
+        # Use previous if None
         self.sonar_xy = None
 
-        # 占据栅格地图（float32）
+        # Occupancy grid map (float32)
         self.logodds = None
-        # 强度栅格地图（uint8）
+        # Intensity grid map (uint8)
         self.intensity = None
 
-        # 缓存上次更新的索引（uint16）
+        # Cache last update indices (uint16)
         self.r, self.c = None, None
-        # 和 logodds（float32）
+        # and logodds (float32)
         self.l = None
-        # 和强度（uint32）
+        # and intensities (uint32)
         self.i = None
 
         #############################################
-        # 用于绘图
+        # For plotting
         #############################################
         self.cimg = None
         self.limg = None
@@ -42,17 +42,17 @@ class Submap(object):
 class Mapping(object):
     def __init__(self):
         #  (x0, y0) ----> x
-        #    |                   转换到
-        #    |                <=================  声纳图像（方位角，距离）
-        #    V                   全局平面
+        #    |                   transformed to
+        #    |                <=================  Sonar image (bearing, range)
+        #    V                   global plane
         #    y
 
-        # 地图大小
+        # map size
         self.x0 = -50.0
         self.y0 = -50.0
         self.width = 100.0
         self.height = 100.0
-        # 通过增加 50.0m 动态调整边界
+        # Dynamically adjust the boundary by increasing 50.0m
         self.inc = 50.0
         self.resolution = 0.2
         self.rows = None
@@ -63,19 +63,19 @@ class Mapping(object):
         self.oculus_r_skip = None
         self.oculus_c_skip = None
 
-        # 栅格单元中的累积强度
+        # Accumulative intensity at grid cell
         self.intensity_grid = None
-        # 栅格单元中的观测计数
+        # Counter of observation at grid cell
         self.counter_grid = None
 
-        # 占据栅格地图
+        # Occupancy grid map
         ###################################
-        # 方法 1：使用 logodds 更新规则
+        # Method 1: use logodds update rule
         ###################################
-        # 强度栅格地图
+        # Intensity grid map
         self.pub_intensity = False
-        # 为了在闭环期间更新其中一个关键帧，
-        # 不能使用钳制更新策略。
+        # In order to update one of the keyframes during loop closure,
+        # clamping update policy can't be used.
         self.pub_occupancy1 = True
         self.hit_prob = 0.8
         self.miss_prob = 0.3
@@ -83,27 +83,27 @@ class Mapping(object):
         self.inflation_angle = 0.05
         self.inflation_range = 0.5
         ###################################
-        # 方法 2：使用点投影
+        # Method 2: use point projection
         ###################################
         self.pub_occupancy2 = True
         self.point_cloud = None
         self.inflation_radius = 0.5
         ###################################
 
-        # 在构建占据地图之前移除烦人的离群点
+        # Remove annoying outliers before building occupancy map
         self.outlier_filter_radius = 5.0
         self.outlier_filter_min_points = 20
 
-        # 只更新有显著运动的关键帧
+        # Only update keyframe that has significant movement
         self.min_translation = 0.5
         self.min_rotation = 0.05
 
-        # 跟踪已编辑的边界框
-        # 只发布框内的地图
+        # Keep track of a bounding box that has been edited
+        # Only map within the box is published
         self.rmin, self.rmax = None, None
         self.cmin, self.cmax = None, None
 
-        # 位姿，声纳数据
+        # pose, ping
         self.keyframes = []
         self.point_cloud = None
 
@@ -150,7 +150,7 @@ class Mapping(object):
         keyframe.pose = pose
 
         if changed:
-            # 下采样原始图像
+            # Downsample raw image
             self.oculus_r_skip = max(
                 1, np.int32(np.floor(self.resolution / self.oculus.range_resolution))
             )
@@ -215,9 +215,9 @@ class Mapping(object):
                 mask /= kernel[hr, hc] / self.hit_prob
                 mask = np.clip(mask, 0.5, self.hit_prob)
 
-                # 只将第一次命中之前的点标记为未命中
+                # Only mark points before the first hit as miss
                 first_hits = np.argmax(mask > 0.5, axis=0)
-                # 如果没有命中，将所有点标记为未命中
+                # Mark all as miss if there is no hit
                 first_hits[first_hits == 0] = mask.shape[0]
                 for j in range(mask.shape[1]):
                     mask[: first_hits[j], j] = self.miss_prob
@@ -228,7 +228,7 @@ class Mapping(object):
             keyframe.logodds = logodds.ravel().astype(np.float32)
 
             #############################################
-            # 保存一些图像用于绘图
+            # Save some images for plotting
             #############################################
             if self.save_fig:
                 keyframe.cimg = r2n(ping)
@@ -245,7 +245,7 @@ class Mapping(object):
         self.fit_grid(keyframe)
         self.inc_grid(keyframe)
 
-        # 以防我们错过一个关键帧
+        # In case we miss one keyframe
         while len(self.keyframes) < key:
             self.keyframes.append(None)
 

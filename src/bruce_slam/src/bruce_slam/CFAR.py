@@ -8,25 +8,25 @@ from . import cfar
 
 class CFAR(object):
     """
-    恒虚警率(CFAR)检测的几种变体
-        - 单元平均(CA)CFAR
-        - 最大单元平均(GOCA)CFAR
-        - 有序统计(OS)CFAR
+    Constant False Alarm Rate (CFAR) detection with several variants
+        - Cell averaging (CA) CFAR
+        - Greatest-of cell-averaging (GOCA) CFAR
+        - Order statistic (OS) CFAR
     """
 
     def __init__(self, Ntc, Ngc, Pfa, rank=None):
-        self.Ntc = Ntc # 训练单元数量
+        self.Ntc = Ntc #number of training cells
         assert self.Ntc % 2 == 0
-        self.Ngc = Ngc # 保护单元数量
+        self.Ngc = Ngc #number of guard cells
         assert self.Ngc % 2 == 0
-        self.Pfa = Pfa # 虚警率
-        if rank is None: # 矩阵秩
+        self.Pfa = Pfa #false alarm rate
+        if rank is None: #matrix rank
             self.rank = self.Ntc / 2
         else:
             self.rank = rank
             assert 0 <= self.rank < self.Ntc
 
-        # 计算 4 种 CFAR 变体的阈值因子
+        #threshold factor calculation for the 4 variants of CFAR
         self.threshold_factor_CA = self.calc_WGN_threshold_factor_CA()
         self.threshold_factor_SOCA = self.calc_WGN_threshold_factor_SOCA()
         self.threshold_factor_GOCA = self.calc_WGN_threshold_factor_GOCA()
@@ -54,13 +54,13 @@ class CFAR(object):
     def __str__(self):
         return "".join(
             [
-                "CFAR 检测器信息\n",
+                "CFAR Detector Information\n",
                 "=========================\n",
-                "训练单元数量: {}\n".format(self.Ntc),
-                "保护单元数量: {}\n".format(self.Ngc),
-                "虚警概率: {}\n".format(self.Pfa),
-                "有序统计秩: {}\n".format(self.rank),
-                "阈值因子:\n",
+                "Number of training cells: {}\n".format(self.Ntc),
+                "Number of guard cells: {}\n".format(self.Ngc),
+                "Probability of false alarm: {}\n".format(self.Pfa),
+                "Order statictics rank: {}\n".format(self.rank),
+                "Threshold factors:\n",
                 "      CA-CFAR: {:.3f}\n".format(self.threshold_factor_CA),
                 "    SOCA-CFAR: {:.3f}\n".format(self.threshold_factor_SOCA),
                 "    GOCA-CFAR: {:.3f}\n".format(self.threshold_factor_GOCA),
@@ -77,7 +77,7 @@ class CFAR(object):
             ret = root(self.calc_WGN_pfa_SOCA, x0 * ratio)
             if ret.success:
                 return ret.x[0]
-        raise ValueError("未找到 SOCA 的阈值因子")
+        raise ValueError("Threshold factor of SOCA not found")
 
     def calc_WGN_threshold_factor_GOCA(self):
         x0 = self.calc_WGN_threshold_factor_CA()
@@ -85,7 +85,7 @@ class CFAR(object):
             ret = root(self.calc_WGN_pfa_GOCA, x0 * ratio)
             if ret.success:
                 return ret.x[0]
-        raise ValueError("未找到 GOCA 的阈值因子")
+        raise ValueError("Threshold factor of GOCA not found")
 
     def calc_WGN_threshold_factor_OS(self):
         x0 = self.calc_WGN_threshold_factor_CA()
@@ -93,7 +93,7 @@ class CFAR(object):
             ret = root(self.calc_WGN_pfa_OS, x0 * ratio)
             if ret.success:
                 return ret.x[0]
-        raise ValueError("未找到 OS 的阈值因子")
+        raise ValueError("Threshold factor of OS not found")
 
     def calc_WGN_pfa_GOSOCA_core(self, x):
         x = float(x)
@@ -122,12 +122,12 @@ class CFAR(object):
 
     def detect(self, mat, alg="CA"):
         """
-        返回目标掩码数组。
+        Return target mask array.
         """
         return self.detector[alg](mat, *self.params[alg])
 
     def detect2(self, mat, alg="CA"):
         """
-        返回目标掩码数组和阈值数组。
+        Return target mask array and threshold array.
         """
         return self.detector2[alg](mat, *self.params[alg])

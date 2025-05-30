@@ -5,6 +5,7 @@ import numpy as np
 from tqdm.auto import tqdm
 from threading import Event
 import rospy
+import os
 
 offline = False
 callback_lock_event = Event()

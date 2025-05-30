@@ -25,40 +25,40 @@ from std_msgs.msg import String, Float32
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
 class DeadReckoningNode(object):
-	'''使用 DVL 和 IMU 读数进行航位推算的类
+	'''A class to support dead reckoning using DVL and IMU readings
 	'''
 	def __init__(self):
-		self.pose = None # 车辆位姿
-		self.prev_time = None # 上一次读数时间
-		self.prev_vel = None # 上一次读数速度
-		self.keyframes = [] # 关键帧列表
+		self.pose = None #vehicle pose
+		self.prev_time = None #previous reading time
+		self.prev_vel = None #previous reading velocity
+		self.keyframes = [] #keyframe list
 
-		# 强制原点处的偏航角与 x 轴对齐
+		# Force yaw at origin to be aligned with x axis
 		self.imu_yaw0 = None
 		self.imu_pose = [0, 0, 0, -np.pi / 2, 0, 0]
 		self.imu_rot = None
 		self.dvl_max_velocity = 0.3
 
-		# 在以下情况下创建新的关键位姿：
-		# - |ti - tj| > min_duration 且
-		# - |xi - xj| > max_translation 或
+		# Create a new key pose when
+		# - |ti - tj| > min_duration and
+		# - |xi - xj| > max_translation or
 		# - |ri - rj| > max_rotation
 		self.keyframe_duration = None
 		self.keyframe_translation = None
 		self.keyframe_rotation = None
 		self.dvl_error_timer = 0.0
 
-		# 多机器人 SLAM 的占位符
+		# place holder for multi-robot SLAM
 		self.rov_id = ""
 
 
 	def init_node(self, ns="~")->None:
-		"""初始化节点，从 ROS 获取所有参数
+		"""Init the node, fetch all paramaters from ROS
 
-		参数:
-			ns (str, 可选): 节点的命名空间。默认为 "~"。
+		Args:
+			ns (str, optional): The namespace of the node. Defaults to "~".
 		"""
-		# 节点参数
+		# Parameters for Node
 		self.imu_pose = rospy.get_param(ns + "imu_pose")
 		self.imu_pose = n2g(self.imu_pose, "Pose3")
 		self.imu_rot = self.imu_pose.rotation()
@@ -67,7 +67,7 @@ class DeadReckoningNode(object):
 		self.keyframe_translation = rospy.get_param(ns + "keyframe_translation")
 		self.keyframe_rotation = rospy.get_param(ns + "keyframe_rotation")
 
-		# 订阅者和缓存
+		# Subscribers and caches
 		self.dvl_sub = Subscriber(DVL_TOPIC, DVL)
 		self.gyro_sub = Subscriber(GYRO_INTEGRATION_TOPIC, Odometry)
 		self.depth_sub = Subscriber(DEPTH_TOPIC, Depth)
@@ -78,17 +78,17 @@ class DeadReckoningNode(object):
 		elif rospy.get_param(ns + "imu_version") == 2:
 			self.imu_sub = Subscriber(IMU_TOPIC_MK_II, Imu)
 
-		# 使用点云进行可视化
+		# Use point cloud for visualization
 		self.traj_pub = rospy.Publisher(
 			"traj_dead_reck", PointCloud2, queue_size=10)
 
 		self.odom_pub = rospy.Publisher(
 			LOCALIZATION_ODOM_TOPIC, Odometry, queue_size=10)
 
-		# 是否使用光纤陀螺仪？
+		# are we using the FOG gyroscope?
 		self.use_gyro = rospy.get_param(ns + "use_gyro")
 
-		# 定义回调函数，使用陀螺仪还是 VN100？
+		# define the callback, are we using the gyro or the VN100?
 		if self.use_gyro:
 			self.ts = ApproximateTimeSynchronizer([self.imu_sub, self.dvl_sub, self.gyro_sub], 300, .1)
 			self.ts.registerCallback(self.callback_with_gyro)
@@ -98,107 +98,107 @@ class DeadReckoningNode(object):
 
 		self.tf = tf.TransformBroadcaster()
 
-		loginfo("定位节点已初始化")
+		loginfo("Localization node is initialized")
 
 
 	def callback(self, imu_msg:Imu, dvl_msg:DVL)->None:
-		"""仅使用 VN100 和 DVL 处理航位推算。融合并发布里程计消息。
+		"""Handle the dead reckoning using the VN100 and DVL only. Fuse and publish an odometry message.
 
-		参数:
-			imu_msg (Imu): VN100 的消息
-			dvl_msg (DVL): DVL 的消息
+		Args:
+			imu_msg (Imu): the message from VN100
+			dvl_msg (DVL): the message from the DVL
 		"""
-		# 获取上一次深度消息
+		#get the previous depth message
 		depth_msg = self.depth_cache.getLast()
-		# 如果没有深度消息，则跳过这个时间步
+		#if there is no depth message, then skip this time step
 		if depth_msg is None:
 			return
 
-		# 检查深度消息和 DVL 之间的延迟
+		#check the delay between the depth message and the DVL
 		dd_delay = (depth_msg.header.stamp - dvl_msg.header.stamp).to_sec()
 		#print(dd_delay)
 		if abs(dd_delay) > 1.0:
-			logdebug("深度消息缺失 {} 秒".format(dd_delay))
+			logdebug("Missing depth message for {}".format(dd_delay))
 
-		# 将 IMU 消息从消息格式转换为 gtsam 旋转对象
+		#convert the imu message from msg to gtsam rotation object
 		rot = r2g(imu_msg.orientation)
 		rot = rot.compose(self.imu_rot.inverse())
 
-		# 如果还没有偏航角，将这个设为零点
+		#if we have no yaw yet, set this one as zero
 		if self.imu_yaw0 is None:
 			self.imu_yaw0 = rot.yaw()
 
-		# 获取旋转矩阵
-		# 如果 Kalman 和 DeadReck 中的 use_gyro 值相同，使用这行
+		# Get a rotation matrix
+		# if use_gyro has the same value in Kalman and DeadReck, use this line
 		rot = gtsam.Rot3.Ypr(rot.yaw()-self.imu_yaw0, rot.pitch(), np.radians(90)+rot.roll())
-		# 如果 Kalman 中 use_gyro = True 且 DeadReck 中 use_gyro = False，使用这行：
+		# if use_gyro = True in Kalman and use_gyro = False in DeadReck, use this line:
 		# rot = gtsam.Rot3.Ypr(rot.yaw()-self.imu_yaw0, rot.pitch(), np.radians(90)+rot.roll())
 
-		# 将 DVL 消息解析为速度数组
+		# parse the DVL message into an array of velocites
 		vel = np.array([dvl_msg.velocity.x, dvl_msg.velocity.y, dvl_msg.velocity.z])
 
-		# 打包里程计消息并发布
+		# package the odom message and publish it
 		self.send_odometry(vel,rot,dvl_msg.header.stamp,depth_msg.depth)
 
 
 	def callback_with_gyro(self, imu_msg:Imu, dvl_msg:DVL, gyro_msg:GyroMsg)->None:
-		"""使用光纤陀螺仪处理航位推算状态估计。这里我们使用
-		陀螺仪作为获取偏航角估计的手段，横滚角和俯仰角仍然来自 VN100。
+		"""Handle the dead reckoning state estimate using the fiber optic gyro. Here we use the
+		Gyro as a means of getting the yaw estimate, roll and pitch are still VN100.
 
-		参数:
-			imu_msg (Imu): vn100 imu 消息
-			dvl_msg (DVL): DVL 消息
-			gyro_msg (GyroMsg): 来自陀螺仪的欧拉角
+		Args:
+			imu_msg (Imu): the vn100 imu message
+			dvl_msg (DVL): the DVL message
+			gyro_msg (GyroMsg): the euler angles from the gyro
 		"""
-		# 解码陀螺仪消息
+		# decode the gyro message
 		gyro_yaw = r2g(gyro_msg.pose.pose).rotation().yaw()
 
-		# 获取上一次深度消息
+		#get the previous depth message
 		depth_msg = self.depth_cache.getLast()
 
-		# 如果没有深度消息，则跳过这个时间步
+		#if there is no depth message, then skip this time step
 		if depth_msg is None:
 			return
 
-		# 检查深度消息和 DVL 之间的延迟
+		#check the delay between the depth message and the DVL
 		dd_delay = (depth_msg.header.stamp - dvl_msg.header.stamp).to_sec()
 		#print(dd_delay)
 		if abs(dd_delay) > 1.0:
-			logdebug("深度消息缺失 {} 秒".format(dd_delay))
+			logdebug("Missing depth message for {}".format(dd_delay))
 
-		# 将 IMU 消息从消息格式转换为 gtsam 旋转对象
+		#convert the imu message from msg to gtsam rotation object
 		rot = r2g(imu_msg.orientation)
 		rot = rot.compose(self.imu_rot.inverse())
 
 
-		# 获取旋转矩阵
+		# Get a rotation matrix
 		rot = gtsam.Rot3.Ypr(gyro_yaw, rot.pitch(), rot.roll())
 
-		# 将 DVL 消息解析为速度数组
+		#parse the DVL message into an array of velocites
 		vel = np.array([dvl_msg.velocity.x, dvl_msg.velocity.y, dvl_msg.velocity.z])
 
-		# 打包里程计消息并发布
+		# package the odom message and publish it
 		self.send_odometry(vel,rot,dvl_msg.header.stamp,depth_msg.depth)
 
 
 	def send_odometry(self,vel:np.array,rot:gtsam.Rot3,dvl_time:rospy.Time,depth:float)->None:
-		"""打包给定所有 DVL、旋转矩阵和深度的里程计
+		"""Package the odometry given all the DVL, rotation matrix, and depth
 
-		参数:
-			vel (np.array): DVL 速度的一维 numpy 数组
-			rot (gtsam.Rot3): 车辆的旋转矩阵
-			dvl_time (rospy.Time): DVL 消息的时间戳
-			depth (float): 车辆深度
+		Args:
+			vel (np.array): a numpy array (1D) of the DVL velocities
+			rot (gtsam.Rot3): the rotation matrix of the vehicle
+			dvl_time (rospy.Time): the time stamp for the DVL message
+			depth (float): vehicle depth
 		"""
 
-		# 如果 DVL 消息有任何速度超过最大阈值，进行错误处理
+		#if the DVL message has any velocity above the max threhold do some error handling
 		if np.any(np.abs(vel) > self.dvl_max_velocity):
 			if self.pose:
 
 				self.dvl_error_timer += (dvl_time - self.prev_time).to_sec()
 				if self.dvl_error_timer > 5.0:
 					logwarn(
-						"DVL 速度 ({:.1f}, {:.1f}, {:.1f}) 超过最大速度 {:.1f} 持续 {:.1f} 秒。".format(
+						"DVL velocity ({:.1f}, {:.1f}, {:.1f}) exceeds max velocity {:.1f} for {:.1f} secs.".format(
 							vel[0],
 							vel[1],
 							vel[2],
@@ -213,19 +213,21 @@ class DeadReckoningNode(object):
 			self.dvl_error_timer = 0.0
 
 		if self.pose:
-			# 使用 DVL 消息计算我们在机体坐标系中移动的距离
+			# 计算时间间隔
 			dt = (dvl_time - self.prev_time).to_sec()
+			# 使用平均速度
 			dv = (vel + self.prev_vel) * 0.5
+			# 计算位移
 			trans = dv * dt
 
-			# 获取仅包含横滚角和俯仰角的旋转矩阵
+			# get a rotation matrix with only roll and pitch
 			rotation_flat = gtsam.Rot3.Ypr(0, rot.pitch(), rot.roll())
 
-			# 将我们的运动转换到全局坐标系
+			# transform our movement to the global frame
 			#trans[2] = -trans[2]
 			#trans = trans.dot(rotation_flat.matrix())
 
-			# 使用 GTSAM 工具传播我们的运动
+			# propagate our movement forward using the GTSAM utilities
 			local_point = gtsam.Point2(trans[0], trans[1])
 
 			pose2 = gtsam.Pose2(
@@ -241,7 +243,7 @@ class DeadReckoningNode(object):
 			# 初始化位姿
 			self.pose = gtsam.Pose3(rot, gtsam.Point3(0, 0, depth))
 
-		# 记录这个时间步的消息供下次使用
+		# 记录当前时间步的计算用于下次计算
 		self.prev_time = dvl_time
 		self.prev_vel = vel
 

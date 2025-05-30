@@ -23,12 +23,12 @@ from bruce_slam.utils.conversions import *
 from bruce_slam.utils.io import *
 
 class KalmanNode(object):
-	'''使用 DVL、IMU、光纤陀螺仪和深度读数的卡尔曼滤波类。
+	'''A class to support Kalman filtering using DVL, IMU, FOG and Depth readings.
 	'''
 
 	def __init__(self):
 
-		# 状态向量 = (x,y,z,横滚角,俯仰角,偏航角,x速度,y速度,z速度,横滚角速度,俯仰角速度,偏航角速度)
+		#state vector = (x,y,z,roll, pitch, yaw, x_dot,y_dot,z_dot,roll_dot,pitch_dot,yaw_dot)
 		self.state_vector= np.array([[0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0], [0]])
 		self.cov_matrix= np.diag([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
 		self.yaw_gyro = 0.
@@ -36,10 +36,10 @@ class KalmanNode(object):
 
 
 	def init_node(self, ns="~")->None:
-		"""初始化节点，获取所有参数。
+		"""Init the node, fetch all paramaters.
 
-		参数:
-			ns (str, 可选): 节点的命名空间。默认为 "~"。
+		Args:
+			ns (str, optional): The namespace of the node. Defaults to "~".
 		"""
 
 		self.state_vector = rospy.get_param(ns + "state_vector")
@@ -56,9 +56,9 @@ class KalmanNode(object):
 		self.H_depth = np.array(rospy.get_param(ns + "H_depth"))
 		self.R_depth = rospy.get_param(ns + "R_depth")
 		self.dt_depth = rospy.get_param(ns + "dt_depth")
-		self.Q = rospy.get_param(ns + "Q") # 过程噪声不确定性
-		self.A_imu = rospy.get_param(ns + "A_imu") # 状态转移矩阵
-		x = rospy.get_param(ns + "offset/x") # 陀螺仪偏移矩阵
+		self.Q = rospy.get_param(ns + "Q") # Process Noise Uncertainty
+		self.A_imu = rospy.get_param(ns + "A_imu") # State Transition Matrix
+		x = rospy.get_param(ns + "offset/x") # gyroscope offset matrix
 		y = rospy.get_param(ns + "offset/y")
 		z = rospy.get_param(ns + "offset/z")
 		self.offset_matrix = Rotation.from_euler("xyz",[x,y,z],degrees=True).as_matrix()
@@ -66,43 +66,43 @@ class KalmanNode(object):
 		self.use_gyro = rospy.get_param(ns + "use_gyro")
 		self.imu_offset = np.radians(rospy.get_param(ns + "imu_offset"))
 
-		# 检查我们使用的是哪个版本的 IMU
+		# check which version of the imu we are using
 		if rospy.get_param(ns + "imu_version") == 1:
 			self.imu_sub = rospy.Subscriber(IMU_TOPIC, Imu,callback=self.imu_callback,queue_size=250)
 		elif rospy.get_param(ns + "imu_version") == 2:
 			self.imu_sub = rospy.Subscriber(IMU_TOPIC_MK_II, Imu, callback=self.imu_callback,queue_size=250)
 
-		# 定义其他订阅者
+		# define the other subcribers
 		self.dvl_sub = rospy.Subscriber(DVL_TOPIC,DVL,callback=self.dvl_callback,queue_size=250)
 		self.depth_sub = rospy.Subscriber(DEPTH_TOPIC, Depth,callback=self.pressure_callback,queue_size=250)
 		self.odom_pub_kalman = rospy.Publisher(LOCALIZATION_ODOM_TOPIC, Odometry, queue_size=250)
 
-		# 定义变换广播器
+		# define the transfor broadcaster
 		self.tf1 = tf.TransformBroadcaster()
 
-		# 如果使用陀螺仪，设置订阅者
+		# if we are using the gyroscope set up the subscribers
 		if self.use_gyro:
 			self.gyro_sub = rospy.Subscriber(GYRO_TOPIC, gyro, self.gyro_callback, queue_size=250)
 
-		# 定义初始位姿，全部为零
+		# define the initial pose, all zeros
 		R_init = gtsam.Rot3.Ypr(0.,0.,0.)
 		self.pose = gtsam.Pose3(R_init, gtsam.Point3(0, 0, 0))
 
-		# 在 ROS 级别记录初始化完成
-		loginfo("卡尔曼节点已初始化")
+		# log at the roslevel that we are done with init 
+		loginfo("Kalman Node is initialized")
 
 
 	def kalman_predict(self,previous_x:np.array,previous_P:np.array,A:np.array):
-		"""传播状态和误差协方差。
+		"""Propagate the state and the error covariance ahead.
 
-		参数:
-			previous_x (np.array): 前一个状态向量的值
-			previous_P (np.array): 前一个协方差矩阵的值
-			A (np.array): 状态转移矩阵
+		Args:
+			previous_x (np.array): value of the previous state vector
+			previous_P (np.array): value of the previous covariance matrix
+			A (np.array): State Transition Matrix
 
-		返回:
-			predicted_x (np.array): 预测估计
-			predicted_P (np.array): 预测协方差矩阵
+		Returns:
+			predicted_x (np.array): predicted estimation
+			predicted_P (np.array): predicted covariance matrix
 		"""
 
 		A = np.array(A)
@@ -113,18 +113,18 @@ class KalmanNode(object):
 
 
 	def kalman_correct(self, predicted_x:np.array, predicted_P:np.array, z:np.array, H:np.array, R:np.array):
-		"""测量更新。
+		"""Measurement Update.
 
-		参数:
-			predicted_x (np.array): 使用 kalman_predict() 预测的状态向量
-			predicted_P (np.array): 使用 kalman_predict() 预测的协方差矩阵
-			z (np.array): 输出向量（测量值）
-			H (np.array): 观测矩阵（H_dvl, H_imu, H_gyro, H_depth）
-			R (np.array): 测量不确定性（R_dvl, R_imu, R_gyro, R_depth）
+		Args:
+			predicted_x (np.array): predicted state vector with kalman_predict()
+			predicted_P (np.array): predicted covariance matrix with kalman_predict()
+			z (np.array): Output Vector (measurement)
+			H (np.array): Observation Matrix (H_dvl, H_imu, H_gyro, H_depth)
+			R (np.array): Measurement Uncertainty (R_dvl, R_imu, R_gyro, R_depth)
 
-		返回:
-			corrected_x (np.array): 修正后的估计
-			corrected_P (np.array): 修正后的协方差矩阵
+		Returns:
+			corrected_x (np.array): corrected estimation
+			corrected_P (np.array): corrected covariance matrix
 
 		"""
 
@@ -136,29 +136,29 @@ class KalmanNode(object):
 
 
 	def gyro_callback(self,gyro_msg:gyro)->None:
-		"""仅使用光纤陀螺仪处理卡尔曼滤波。
-		参数:
-			gyro_msg (gyro): 来自陀螺仪的欧拉角
+		"""Handle the Kalman Filter using the FOG only.
+		Args:
+			gyro_msg (gyro): the euler angles from the gyro
 		"""
 
-		# 解析消息并应用偏移矩阵
+		# parse message and apply the offset matrix
 		arr = np.array(list(gyro_msg.delta))
 		arr = arr.dot(self.offset_matrix) 
-		delta_yaw_meas = np.array([[arr[0]],[0],[0]]) # 形状为(3,1)的测量值，用于应用卡尔曼滤波
+		delta_yaw_meas = np.array([[arr[0]],[0],[0]]) #Measurement of shape(3,1) to apply Kalman
 		self.state_vector,self.cov_matrix = self.kalman_correct(self.state_vector, self.cov_matrix, delta_yaw_meas, self.H_gyro, self.R_gyro)
 		self.yaw_gyro += self.state_vector[11][0]
 
 	def dvl_callback(self, dvl_msg:DVL)->None:
-		"""仅使用 DVL 处理卡尔曼滤波。
+		"""Handle the Kalman Filter using the DVL only.
 
-		参数:
-			dvl_msg (DVL): 来自 DVL 的消息
+		Args:
+			dvl_msg (DVL): the message from the DVL
 		"""
 
-		# 解析 DVL 速度
+		# parse the dvl velocites 
 		dvl_measurement = np.array([[dvl_msg.velocity.x], [dvl_msg.velocity.y], [dvl_msg.velocity.z]])
 
-		# 如果速度过高，不进行卡尔曼修正
+		# We do not do a kalman correction if the speed is high.
 		if np.any(np.abs(dvl_measurement) > self.dvl_max_velocity):
 			return
 		else:
@@ -166,60 +166,60 @@ class KalmanNode(object):
 
 
 	def pressure_callback(self,depth_msg:Depth):
-		"""使用深度处理卡尔曼滤波。
-		参数:
-			depth_msg (Depth): 压力
+		"""Handle the Kalman Filter using the Depth.
+		Args:
+			depth_msg (Depth): pressure
 		"""
 
-		depth = np.array([[depth_msg.depth],[0],[0]]) # 我们需要形状为(3,1)用于修正
+		depth = np.array([[depth_msg.depth],[0],[0]]) # We need the shape(3,1) for the correction
 		self.state_vector,self.cov_matrix = self.kalman_correct(self.state_vector, self.cov_matrix, depth, self.H_depth, self.R_depth)
 
 	def imu_callback(self, imu_msg:Imu)->None:
-		"""仅使用 VN100 处理卡尔曼滤波。发布状态向量。
+		"""Handle the Kalman Filter using the VN100 only. Publish the state vector.
 
-		参数:
-			imu_msg (Imu): 来自 VN100 的消息
+		Args:
+			imu_msg (Imu): the message from VN100
 		"""
 
-		# 卡尔曼预测
+		# Kalman prediction
 		predicted_x, predicted_P = self.kalman_predict(self.state_vector, self.cov_matrix, self.A_imu)
 
-		# 解析 IMU 测量值
+		# parse the IMU measurnment
 		roll_x, pitch_y, yaw_z = euler_from_quaternion((imu_msg.orientation.x,imu_msg.orientation.y,imu_msg.orientation.z,imu_msg.orientation.w))
 		euler_angle = np.array([[self.imu_offset+roll_x], [pitch_y], [yaw_z]])
 
-		# 如果还没有偏航角，将这个设为零点
+		#if we have no yaw yet, set this one as zero
 		if self.imu_yaw0 is None:
 			self.imu_yaw0 = yaw_z
 		
-		# 使偏航角相对于第一次测量
+		# make yaw relative to the first meas
 		euler_angle[2] -= self.imu_yaw0
 
-		# 卡尔曼修正
+		# Kalman correction
 		self.state_vector,self.cov_matrix = self.kalman_correct(predicted_x, predicted_P, euler_angle, self.H_imu, self.R_imu)
 
-		# 使用滤波后的速度更新我们的 x 和 y 估计
-		trans_x = self.state_vector[6][0]*self.dt_imu # x 更新
-		trans_y = self.state_vector[7][0]*self.dt_imu # y 更新
+		# Use filtered velocity to update our x and y estimates
+		trans_x = self.state_vector[6][0]*self.dt_imu # x update
+		trans_y = self.state_vector[7][0]*self.dt_imu # y update
 		local_point = gtsam.Point2(trans_x, trans_y)
 
-		# 检查是否使用光纤陀螺仪
+		# check if we are using the FOG
 		if self.use_gyro:
 			R = gtsam.Rot3.Ypr(self.yaw_gyro,self.state_vector[4][0], self.state_vector[3][0]) 
 			pose2 = gtsam.Pose2(self.pose.x(), self.pose.y(), self.yaw_gyro)
-		else: # 不使用陀螺仪
+		else: # We are not using the gyro
 			R = gtsam.Rot3.Ypr(self.state_vector[5][0], self.state_vector[4][0], self.state_vector[3][0])
 			pose2 = gtsam.Pose2(self.pose.x(), self.pose.y(), self.pose.rotation().yaw())
 
-		# 更新我们的位姿估计并发送里程计消息
+		# update our pose estimate and send out the odometry message
 		point = pose2.transformFrom(local_point)
 		self.pose = gtsam.Pose3(R, gtsam.Point3(point[0], point[1], 0))
 		self.send_odometry(imu_msg.header.stamp)
 
 	def send_odometry(self,t:float):
-		"""发布位姿。
-		参数:
-			t (float): 来自 imu_msg 的时间
+		"""Publish the pose.
+		Args:
+			t (float): time from imu_msg
 		"""
 		
 		header = rospy.Header()

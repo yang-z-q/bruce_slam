@@ -12,41 +12,41 @@ from .utils.io import *
 
 
 class STATUS(Enum):
-    """ICP 调用状态类"""
+    """A class for the status of a ICP call"""
 
-    NOT_ENOUGH_POINTS = "点数不足"
-    LARGE_TRANSFORMATION = "变换过大"
-    NOT_ENOUGH_OVERLAP = "重叠区域不足"
-    NOT_CONVERGED = "未收敛"
-    INITIALIZATION_FAILURE = "初始化失败"
-    SUCCESS = "成功"
+    NOT_ENOUGH_POINTS = "Not enough points"
+    LARGE_TRANSFORMATION = "Large transformation"
+    NOT_ENOUGH_OVERLAP = "Not enough overlap"
+    NOT_CONVERGED = "Not converged"
+    INITIALIZATION_FAILURE = "Initialization failure"
+    SUCCESS = "Success"
 
     def __init__(self, *args, **kwargs):
-        """类构造函数"""
+        """Class constructor"""
         Enum.__init__(*args, **kwargs)
         self.description = None
 
     def __bool__(self) -> bool:
-        """布尔值重载
+        """boolean override
 
-        返回:
-            bool: 如果状态为 SUCCESS 则返回 true,否则返回 false
+        Returns:
+            bool: returns true if the status is SUCCESS else returns false
         """
         return self == STATUS.SUCCESS
 
     def __nonzero__(self) -> bool:
-        """布尔值重载
+        """_summary_
 
-        返回:
-            bool: 如果状态为 SUCCESS 则返回 true,否则返回 false
+        Returns:
+            bool: returns true if the status is SUCCESS else returns false
         """
         return self == STATUS.SUCCESS
 
     def __str__(self) -> str:
-        """将类转换为字符串
+        """Convert this class to a string
 
-        返回:
-            str: 类的可打印版本
+        Returns:
+            str: printable version of this class
         """
         if self.description:
             return self.value + ": " + self.description
@@ -55,8 +55,9 @@ class STATUS(Enum):
 
 
 class Keyframe(object):
-    """SLAM 的关键帧对象。在这个 SLAM 解决方案中，我们使用因子图和关键帧列表。
-    关键帧存储从更新后的位姿到该时间步观察到的所有点。
+    """Keyframe object for SLAM. In this SLAM solution we utilze a factor graph
+    and a list of keyframes. The keyframe stores everything from updated pose to
+    points observed at that timestep.
     """
 
     def __init__(
@@ -72,53 +73,53 @@ class Keyframe(object):
         vin=None, 
         index_kf=None
     ):
-        """关键帧类的构造函数
+        """Class constructor for a keyframe
 
-        参数:
-            status (bool): 这个帧是否是关键帧？
-            time (rospy.Time): 输入消息的时间戳
-            dr_pose3 (gtsam.Pose3): 航迹推算位姿
-            points (np.array, 可选): 点云数组。默认为 np.zeros((0, 2), np.float32)。
-            cov (np.array, 可选): 协方差矩阵。默认为 None。
+        Args:
+            status (bool): is this frame a keyframe?
+            time (rospy.Time): timestamp from incoming message
+            dr_pose3 (gtsam.Pose3): dead reckoning pose
+            points (np.array, optional): point cloud array. Defaults to np.zeros((0, 2), np.float32).
+            cov (np.array, optional): covariance matrix. Defaults to None.
         """
 
-        self.status = status  # 用于标记关键帧
-        self.time = time  # 时间
+        self.status = status  # used to mark keyframe
+        self.time = time  # time
 
-        self.dr_pose3 = dr_pose3  # 航迹推算 3D 位姿
-        self.dr_pose = pose322(dr_pose3)  # 航迹推算 2D 位姿
+        self.dr_pose3 = dr_pose3  # dead reckoning 3d pose
+        self.dr_pose = pose322(dr_pose3)  # dead reckoning 2d pose
 
-        self.pose3 = dr_pose3  # 估计的 3D 位姿（稍后更新）
-        self.pose = pose322(dr_pose3)  # 估计的 2D 位姿
+        self.pose3 = dr_pose3  # estimated 3d pose (will be updated later)
+        self.pose = pose322(dr_pose3)  # estimated 2d pose
 
-        self.cov = cov  # 局部坐标系中的协方差（始终为 2D）
-        self.transf_cov = None  # 全局坐标系中的协方差
+        self.cov = cov  # cov in local frame (always 2d)
+        self.transf_cov = None  # cov in global frame
 
-        self.points = points.astype(np.float32)  # 局部坐标系中的点（始终为 2D）
-        self.transf_points = None  # 基于位姿转换到全局坐标系的点
+        self.points = points.astype(np.float32)  # points in local frame (always 2d)
+        self.transf_points = None  # transformed points in global frame based on pose
 
         self.points3D = points.astype(
             np.float32
-        )  # 来自正交传感器融合的 3D 点云
+        )  # 3D point cloud from orthoganal sensor fusion
         self.transf_points3D = (
-            None  # 基于位姿转换到全局坐标系的 3D 点云
+            None  # transformed 3D point cloud in global frame based on pose
         )
 
         self.constraints = (
             []
-        )  # 非顺序约束（键，里程计）即回环检测
+        )  # Non-sequential constraints (key, odom) aka loop closures
 
-        self.twist = None  # 发布里程计的 twist 消息
+        self.twist = None  # twist message for publishing odom
 
-        self.image = None  # 此关键帧的图像
+        self.image = None  # image with this keyframe
         self.vertical_images = []
         self.horizontal_images = []
 
-        self.poseTrue = None  # 记录 gazebo 中的真实位姿，仅用于仿真
+        self.poseTrue = None  # record the true pose from gazebo, simulation only
 
         self.sub_frames = []
 
-        self.submap = None # 多机器人 SLAM 数据
+        self.submap = None # multi-robot slam data
         self.ring_key = None
         self.context = None
         self.redo_submap = False
@@ -134,14 +135,14 @@ class Keyframe(object):
         self.bits = None
 
     def update(self, new_pose: gtsam.Pose2, new_cov: np.array = None) -> None:
-        """在 SLAM 更新后更新关键帧，传入新的位姿和协方差
+        """Update a keyframe following a SLAM update, pass in the new pose and covariance
 
-        参数:
-            new_pose (gtsam.Pose2): SLAM 优化后的新位姿
-            new_cov (np.array, 可选): 新的协方差矩阵。默认为 None。
+        Args:
+            new_pose (gtsam.Pose2): The new pose from the SLAM optimization
+            new_cov (np.array, optional): The new covariance matrix. Defaults to None.
         """
 
-        # 更新 2D 和 3D 位姿
+        # push the pose in 2D and 3D
         self.pose = new_pose
         self.pose3 = n2g(
             (
@@ -155,17 +156,17 @@ class Keyframe(object):
             "Pose3",
         )
 
-        # 基于新位姿转换点云，2D 和 3D
+        # transform the points based on the new pose, 2D and 3D
         self.transf_points = Keyframe.transform_points(self.points, self.pose)
         self.transf_points3D = Keyframe.transform_points_3D(
             self.points3D, self.pose, self.pose3
         )
 
-        # 如果有新的协方差则更新
+        # update the new covariance if we have one
         if new_cov is not None:
             self.cov = new_cov
 
-        # 将协方差转换到全局坐标系
+        # transform the covariance to the global frame
         if self.cov is not None:
             c, s = np.cos(self.pose.theta()), np.sin(self.pose.theta())
             R = np.array([[c, -s], [s, c]])
@@ -176,66 +177,66 @@ class Keyframe(object):
 
     @staticmethod
     def transform_points(points: np.array, pose: gtsam.Pose2) -> np.array:
-        """给定位姿转换一组 2D 点
+        """transform a set of 2D points given a pose
 
-        参数:
-            points (np.array): 要转换的点云
-            pose (gtsam.Pose2): 要应用的变换
+        Args:
+            points (np.array): point cloud to be transformed
+            pose (gtsam.Pose2): transformation to be applied
 
-        返回:
-            np.array: 转换后的点云
+        Returns:
+            np.array: transformed point cloud
         """
 
-        # 检查是否有点
+        # check if there are actually any points
         if len(points) == 0:
             return np.empty_like(points, np.float32)
 
-        # 将位姿转换为矩阵格式
+        # convert the pose to matrix format
         T = pose.matrix().astype(np.float32)
 
-        # 旋转和平移到全局坐标系
+        # rotate and translate to the global frame
         return points.dot(T[:2, :2].T) + T[:2, 2]
 
     @staticmethod
     def transform_points_3D(
         points: np.array, pose: gtsam.Pose2, pose3: gtsam.Pose3
     ) -> np.array:
-        """将一组 3D 点转换到给定位姿
+        """transform a set of 3D points to a given pose
 
-        参数:
-            points (np.array): 要转换的点
-            pose (gtsam.Pose2): 要移除的 2D 位姿
-            pose3 (gtsam.Pose3): 要应用的 3D 变换
+        Args:
+            points (np.array): points to be transformed
+            pose (gtsam.Pose2): 2D pose to be removed
+            pose3 (gtsam.Pose3): 3D transform to be applied
 
-        返回:
-            np.array: 转换后的点云
+        Returns:
+            np.array: the transformed point cloud
         """
 
-        # 检查是否有点
+        # check if there are actually any points
         if len(points) == 0 or points.shape[1] != 3:
             return np.empty_like(points, np.float32)
 
-        # 将位姿转换为矩阵格式
+        # convert the pose to matrix format
         H = pose3.matrix().astype(np.float32)
 
-        # 旋转和平移到全局坐标系
+        # rotate and translate to the global frame
         return points.dot(H[:3, :3].T) + H[:3, 3]
 
 
 class InitializationResult(object):
-    """存储全局 ICP 所需的所有内容"""
+    """Stores everything needed to attempt global ICP"""
 
     def __init__(self):
-        """类构造函数"""
+        """Class constructor"""
 
-        # 所有点都在局部坐标系中
+        # all points are in local frame
         self.source_points = np.zeros((0, 2))
         self.target_points = np.zeros((0, 2))
         self.source_key = None
         self.target_key = None
         self.source_pose = None
         self.target_pose = None
-        # 用于采样的协方差
+        # Cov for sampling
         self.cov = None
         self.occ = None
         self.status = None
@@ -244,7 +245,7 @@ class InitializationResult(object):
 
 
 class ICPResult(object):
-    """存储 ICP 的结果"""
+    """Stores the results of ICP"""
 
     def __init__(
         self,
@@ -252,15 +253,15 @@ class ICPResult(object):
         use_samples: bool = False,
         sample_eps: float = 0.01,
     ):
-        """类构造函数
+        """Class constructor
 
-        参数:
-            init_ret (InitializationResult): 初始化结果
-            use_samples (bool, 可选): 是否使用采样。默认为 False。
-            sample_eps (float, 可选): 采样精度。默认为 0.01。
+        Args:
+            init_ret (InitializationResult): the global ICP initialization result
+            use_samples (bool, optional): _description_. Defaults to False.
+            sample_eps (float, optional): _description_. Defaults to 0.01.
         """
 
-        # 所有点都在局部坐标系中
+        # all points are in local frame
         self.source_points = init_ret.source_points
         self.target_points = init_ret.target_points
         self.source_key = init_ret.source_key
@@ -274,7 +275,7 @@ class ICPResult(object):
         self.inserted = False
         self.sample_transforms = None
 
-        # 填充初始变换
+        # populate the initial transform
         if init_ret.estimated_source_pose is not None:
             self.initial_transform = self.target_pose.between(
                 init_ret.estimated_source_pose
@@ -282,7 +283,7 @@ class ICPResult(object):
         else:
             self.initial_transform = self.target_pose.between(self.source_pose)
 
-        # 如果使用采样来推导协方差矩阵
+        # if we are using sampling to derive the covariance matrix
         if use_samples and init_ret.source_pose_samples is not None:
             idx = np.argsort(init_ret.source_pose_samples[:, -1])
             transforms = [
@@ -300,29 +301,29 @@ class ICPResult(object):
 
 
 class SMParams(object):
-    """扫描匹配参数类"""
+    """Stores scan-matching-parameters"""
 
     def __init__(self):
-        """构造函数"""
+        """Constructor"""
 
-        # 使用占据概率地图匹配来初始化 ICP
+        # Use occupancy probability map matching to initialize ICP
         self.initialization = None
-        # 全局搜索参数
+        # Global search params
         self.initialization_params = None
-        # 最小点数
+        # Minimum number of points
         self.min_points = None
-        # 与初始猜测的最大偏差
+        # Max deviation from initial guess
         self.max_translation = None
         self.max_rotation = None
 
-        # 源关键帧与最后一个目标帧之间的最小间隔
+        # Min separation between source key and the last target frame
         self.min_st_sep = None
-        # 用于构建源点的源帧数量
-        # 在 SSM 中不使用
+        # Number of source frames to build source points
+        # Not used in SSM
         self.source_frames = None
-        # 用于构建目标点的目标帧数量
-        # 在 NSSM 中不使用
+        # Number of target frames to build target points
+        # Not used in NSSM
         self.target_frames = None
 
-        # 用于计算协方差的 ICP 实例数量
+        # Number of ICP instances to run to calculate cov
         self.cov_samples = None

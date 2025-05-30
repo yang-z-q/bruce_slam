@@ -1,5 +1,5 @@
 <launch>
-    <arg name="rviz" default="true"/>
+    <arg name="rviz" default="false"/>
     <arg name="enable_slam" default="true"/>
     <arg name="kalman_dead_reckoning" default="false"/>
 

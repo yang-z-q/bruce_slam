@@ -14,64 +14,64 @@ from std_msgs.msg import String, Float32
 
 
 class GyroFilter(object):
-	'''使用 DVL 和 IMU 读数进行航位推算的类
+	'''A class to support dead reckoning using DVL and IMU readings
 	'''
 	def __init__(self):
-		# 初始化欧拉角
+		# start the euler angles
 		self.roll, self.yaw, self.pitch = 90.,0.,0.
 
 	def init_node(self, ns:str="~")->None:
-		"""节点初始化，获取所有相关参数等。
+		"""Node init, get all the relevant params etc.
 
-		参数:
-			ns (str, 可选): 节点所在的命名空间。默认为 "~"。
+		Args:
+			ns (str, optional): The namespace the node is in. Defaults to "~".
 		"""
 
-		# 定义陀螺仪的旋转偏移矩阵，使陀螺仪坐标系与声纳坐标系对齐
+		# define the rotation offset matrix for the gyro, this makes the gyro frame align with the sonar frame
 		x = rospy.get_param(ns + "offset/x")
 		y = rospy.get_param(ns + "offset/y")
 		z = rospy.get_param(ns + "offset/z")
 		self.offset_matrix = Rotation.from_euler("xyz",[x,y,z],degrees=True).as_matrix()
 
-		# 地球自转速度
+		# the speed the earth is rotating
 		self.latitude = np.radians(rospy.get_param(ns + "latitude"))
 		self.earth_rate = -15.04107 * np.sin(self.latitude) / 3600.0
 		self.sensor_rate = rospy.get_param(ns + "sensor_rate")
 
-		# 定义 tf 转换器和陀螺仪订阅者
+		# define tf transformer and gyro sub
 		self.odom_pub = rospy.Publisher(GYRO_INTEGRATION_TOPIC, Odometry, queue_size=self.sensor_rate+50)
 		self.gyro_sub = rospy.Subscriber(GYRO_TOPIC, gyro, self.callback, queue_size=self.sensor_rate+50)
 
-		loginfo("陀螺仪滤波节点已初始化")
+		loginfo("Gyro filtering node is initialized")
 
 
 	def callback(self, gyro_msg:gyro)->None:
-		"""回调函数，接收原始陀螺仪读数（角度增量）并
-		更新欧拉角估计。将这些角度作为 ROS 里程计消息发布。
+		"""Callback function, takes in the raw gyro readings (delta angles) and
+		updates the estimate of euler angles. Publishes these angles as a ROS odometry message.
 
-		参数:
-			gyro_msg (gyro): 输入的陀螺仪消息，这些是角度增量而不是旋转速率。
+		Args:
+			gyro_msg (gyro): the incoming gyro message, these are delta angles not rotation rates.
 		"""
 
-		# 解析消息并应用偏移矩阵
+		# parse message and apply the offset matrix
 		dx,dy,dz = list(gyro_msg.delta)
 		arr = np.array([dx,dy,dz])
 		arr = arr.dot(self.offset_matrix)
 		delta_yaw, delta_pitch, delta_roll = arr
 
-		# 减去地球自转的影响
+		# subtract the rotation of the eath
 		delta_roll += (self.earth_rate / self.sensor_rate)
 
-		# 执行积分，注意这是弧度制
+		# perform the integration, note this is in radians
 		self.pitch += delta_pitch
 		self.yaw += delta_yaw
 		self.roll += delta_roll
 
-		# 打包为 gtsam 对象
+		#package as a gtsam object
 		rot = gtsam.Rot3.Ypr(self.yaw,self.pitch,self.roll)
 		pose = gtsam.Pose3(rot, gtsam.Point3(0,0,0))
 
-		# 发布里程计消息
+		# publish an odom message
 		header = rospy.Header()
 		header.stamp = gyro_msg.header.stamp
 		header.frame_id = "odom"

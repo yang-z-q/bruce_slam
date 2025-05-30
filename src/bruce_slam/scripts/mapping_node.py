@@ -43,7 +43,7 @@ class MappingNode(Mapping):
 
         self.pub_intensity = rospy.get_param(ns + "pub_intensity")
 
-        # 只更新有显著运动的关键帧
+        # Only update keyframe that has significant movement
         self.min_translation = rospy.get_param(ns + "min_translation")
         self.min_rotation = rospy.get_param(ns + "min_rotation")
 
@@ -52,15 +52,16 @@ class MappingNode(Mapping):
             self.traj_sub = Subscriber(SLAM_TRAJ_TOPIC, PointCloud2)
         else:
             self.traj_sub = Subscriber(LOCALIZATION_TRAJ_TOPIC, PointCloud2)
-        # 方法 1
+        # Method 1
         if self.pub_occupancy1:
             self.feature_sub = Subscriber(SONAR_FEATURE_TOPIC, PointCloud2)
-        # 方法 2
+        # Method 2
         if self.pub_occupancy2:
             self.feature_sub = Subscriber(SLAM_CLOUD_TOPIC, PointCloud2)
 
-        # 轨迹和声纳数据的时间戳必须完全相同
-        # 需要较大的队列大小以确保不会丢失任何关键帧，特别是在离线播放时
+        # The time stamps for trajectory and ping have to be exactly the same
+        # A big queue_size is required to assure no keyframe is missed especially
+        # for offline playing.
         self.ts = TimeSynchronizer(
             [self.traj_sub, self.sonar_sub, self.feature_sub], 100
         )
@@ -76,7 +77,7 @@ class MappingNode(Mapping):
         self.get_map_srv = rospy.Service(ns + "get_map", GetOccupancyMap, self.get_map)
 
         self.configure()
-        loginfo("建图节点已初始化")
+        loginfo("Mapping node is initialized")
 
     def get_map(self, req):
         resp = GetOccupancyMapResponse()
@@ -89,19 +90,19 @@ class MappingNode(Mapping):
     @add_lock
     def tpf_callback(self, traj_msg, ping, feature_msg):
         self.lock.acquire()
-        with CodeTimer("建图 - 添加关键帧"):
+        with CodeTimer("Mapping - add keyframe"):
             traj = r2n(traj_msg)
             pose = pose322(n2g(traj[-1, :6], "Pose3"))
             points = r2n(feature_msg)
             self.add_keyframe(len(traj) - 1, pose, ping, points)
 
-        with CodeTimer("建图 - 更新关键帧"):
+        with CodeTimer("Mapping - update keyframe"):
             for x in range(len(traj) - 1):
                 pose = pose322(n2g(traj[x, :6], "Pose3"))
                 self.update_pose(x, pose)
 
         if self.pub_intensity:
-            with CodeTimer("建图 - 发布强度图"):
+            with CodeTimer("Mapping - publish intensity map"):
                 intensity_msg = self.get_intensity_grid()
                 intensity_msg.header.stamp = ping.header.stamp
                 if not self.use_slam_traj:
@@ -109,7 +110,7 @@ class MappingNode(Mapping):
                 self.intensity_map_pub.publish(intensity_msg)
 
         if self.pub_occupancy1:
-            with CodeTimer("建图 - 发布占据栅格图"):
+            with CodeTimer("Mapping - publish occupancy map"):
                 occupancy_msg = self.get_occupancy_grid1()
                 occupancy_msg.header.stamp = ping.header.stamp
                 if not self.use_slam_traj:
@@ -117,15 +118,15 @@ class MappingNode(Mapping):
                 self.occupancy_map_pub.publish(occupancy_msg)
 
         if self.pub_occupancy2:
-            with CodeTimer("建图 - 发布占据栅格图"):
+            with CodeTimer("Mapping - publish occupancy map"):
                 occupancy_msg = self.get_occupancy_grid2()
                 occupancy_msg.header.stamp = ping.header.stamp
                 if not self.use_slam_traj:
                     occupancy_msg.header.frame_id = "odom"
                 self.occupancy_map_pub.publish(occupancy_msg)
 
-        # # 为什么这不起作用？
-        # # 删除时间同步器中不必要的缓存数据，因为我们使用了较大的队列
+        # # Why doesn't this work?
+        # # Delete unnecessary ping cached in time synchronizer since we use a big queue.
         # q = self.ts.queues[1]
         # self.ts.queues[1] = {
         #     t: m for t, m in q.items() if t >= ping.header.stamp
@@ -190,8 +191,8 @@ if __name__ == "__main__":
 
     args, _ = common_parser().parse_known_args()
     if not args.file:
-        loginfo("开始在线建图...")
+        loginfo("Start online mapping...")
         rospy.spin()
     else:
-        loginfo("开始离线建图...")
+        loginfo("Start offline mapping...")
         offline(args)
